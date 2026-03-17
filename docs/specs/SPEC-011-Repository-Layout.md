@@ -17,6 +17,7 @@ whatsapp-tts/
 │   │   ├── message.go
 │   │   ├── response.go
 │   │   ├── audio.go
+│   │   ├── types.go
 │   │   └── errors.go
 │   │
 │   ├── pipeline/                # Motor de pipeline de procesamiento
@@ -31,24 +32,29 @@ whatsapp-tts/
 │   │   └── context.go
 │   │
 │   ├── handler/                 # Handlers HTTP
-│   │   ├── webhook.go
-│   │   └── health.go
+│   │   └── webhook.go
 │   │
 │   ├── config/                 # Configuración de la aplicación
 │   │   └── config.go
 │   │
-│   └── logging/                # Logging estructurado
+│   ├── logging/                # Logging estructurado
+│   │   └── logger.go
+│   │
+│   └── observability/          # Observabilidad (logging, metrics)
 │       └── logger.go
 │
-├── adapters/                   # Implementaciones de interfaces externas
+├── internal/adapters/          # Implementaciones de interfaces externas
 │   ├── tts/                    # Proveedores TTS
 │   │   ├── provider.go        # Interfaz TTSProvider
 │   │   └── styletts/          # Implementación StyleTTS
 │   │
-│   └── delivery/              # Adapters de entrega
-│       ├── adapter.go         # Interfaz DeliveryAdapter
-│       └── whatsapp/          # Implementación WhatsApp
-│           └── adapter.go
+│   ├── delivery/              # Adapters de entrega
+│   │   ├── adapter.go         # Interfaz DeliveryAdapter
+│   │   └── whatsapp/          # Implementación WhatsApp
+│   │       └── adapter.go
+│   │
+│   └── whatsapp/              # Cliente WhatsApp Cloud API
+│       └── client.go
 │
 ├── pkg/                        # Paquetes públicos reutilizables
 │   └── utils/                  # Utilidades generales
@@ -159,26 +165,36 @@ type WebhookHandler struct {
 func (h *WebhookHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 ```
 
-### 3.5 adapters/tts
+### 3.5 internal/adapters/tts
 
 Implementaciones de proveedores TTS. Cumple con la interfaz TTSProvider.
 
 ```
-adapters/tts/
+internal/adapters/tts/
 ├── provider.go      # Interfaz que deben cumplir los providers
 ├── styletts/        # StyleTTS2 implementation
 └── factory.go       # Factory para crear providers
 ```
 
-### 3.6 adapters/delivery
+### 3.6 internal/adapters/delivery
 
 Implementaciones de adapters de entrega.
 
 ```
-adapters/delivery/
+internal/adapters/delivery/
 ├── adapter.go       # Interfaz que deben cumplir los adapters
 ├── whatsapp/        # WhatsApp Cloud API implementation
 └── registry.go      # Registry para múltiples adapters
+```
+
+### 3.7 internal/adapters/whatsapp
+
+Cliente directo para WhatsApp Cloud API.
+
+```
+internal/adapters/whatsapp/
+├── client.go        # Cliente HTTP para WhatsApp API
+└── client_test.go   # Tests del cliente
 ```
 
 ## 4. Convenciones de Nomenclatura

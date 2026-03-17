@@ -4,142 +4,105 @@
 
 El adapter de entrega es responsable de enviar respuestas al canal de mensajería externo. La interfaz permite soportar múltiples canales (WhatsApp, Telegram, etc.) sin modificar la lógica del pipeline.
 
-## 2. Interfaz DeliveryAdapter
+## 2. WhatsApp Client Interface
 
-```go
-package adapter
-
-import (
-    "context"
-    "errors"
-)
-
-var (
-    ErrDeliveryFailed      = errors.New("delivery failed")
-    ErrInvalidPayload      = errors.New("invalid payload")
-    ErrChannelNotSupported = errors.New("channel not supported")
-)
-
-type DeliveryAdapter interface {
-    SendAudio(ctx context.Context, targetUser string, audioID string) error
-    SendText(ctx context.Context, targetUser string, text string) error
-    SendImage(ctx context.Context, targetUser string, imageURL, caption string) error
-    SendVideo(ctx context.Context, targetUser string, videoURL, caption string) error
-    SendDocument(ctx context.Context, targetUser string, docURL, filename string) error
-    Name() string
-    SupportedChannels() []string
-}
-```
-
-## 3. WhatsApp Adapter
+El cliente de WhatsApp se encuentra en `internal/adapters/whatsapp/client.go`.
 
 ```go
 package whatsapp
 
-type WhatsAppAdapter struct {
+import (
+    "context"
+)
+
+type Client struct {
     httpClient  *http.Client
     baseURL     string
-    phoneNumber string
+    version     string
+    phoneID     string
     accessToken string
 }
 
-func (a *WhatsAppAdapter) Name() string { return "whatsapp" }
-
-func (a *WhatsAppAdapter) SupportedChannels() []string {
-    return []string{"whatsapp"}
+type Config struct {
+    PhoneNumberID string
+    AccessToken   string
+    BaseURL       string
+    Version       string
 }
 
-func (a *WhatsAppAdapter) SendAudio(ctx context.Context, targetUser, audioID string) error {
-    payload := map[string]interface{}{
-        "messaging_product": "whatsapp",
-        "to":                targetUser,
-        "type":              "audio",
-        "audio":            map[string]interface{}{"id": audioID},
-    }
-    return a.sendMessage(ctx, targetUser, payload)
-}
-
-func (a *WhatsAppAdapter) SendText(ctx context.Context, targetUser, text string) error {
-    payload := map[string]interface{}{
-        "messaging_product": "whatsapp",
-        "to":                targetUser,
-        "type":              "text",
-        "text":             map[string]interface{}{"body": text},
-    }
-    return a.sendMessage(ctx, targetUser, payload)
-}
-
-func (a *WhatsAppAdapter) sendMessage(ctx context.Context, to string, payload map[string]interface{}) error {
-    endpoint := fmt.Sprintf("%s/%s/messages", a.baseURL, a.phoneNumber)
-    
-    reqBody, _ := json.Marshal(payload)
-    req, _ := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(reqBody))
-    req.Header.Set("Authorization", "Bearer "+a.accessToken)
-    req.Header.Set("Content-Type", "application/json")
-    
-    resp, err := a.httpClient.Do(req)
-    if err != nil {
-        return fmt.Errorf("http request failed: %w", err)
-    }
-    defer resp.Body.Close()
-    
-    if resp.StatusCode >= 400 {
-        return fmt.Errorf("whatsapp api error (status=%d)", resp.StatusCode)
-    }
-    return nil
-}
+func NewClient(config Config) *Client
 ```
 
-## 4. Media Uploader
-
-Para enviar audio, primero debe subirse a WhatsApp:
+## 3. Métodos del Cliente
 
 ```go
-type MediaUploader interface {
-    UploadAudio(ctx context.Context, audioData []byte, mimeType string) (string, error)
-}
+func (c *Client) SendTextMessage(ctx context.Context, to, text string) (*SendMessageResponse, error)
 
-func (a *WhatsAppAdapter) UploadAudio(ctx context.Context, audioData []byte, mimeType string) (string, error) {
-    endpoint := fmt.Sprintf("%s/%s/media", a.baseURL, a.phoneNumber)
-    // WhatsApp requiere form-data upload
-    // Retorna el media ID de WhatsApp
-}
+func (c *Client) SendAudioMessage(ctx context.Context, to, audioURL string) (*SendMessageResponse, error)
 ```
 
-## 5. Adapter Registry
+## 4. DTOs de Request/Response
 
 ```go
-package adapter
-
-type AdapterRegistry struct {
-    adapters map[string]DeliveryAdapter
+// SendTextRequest representa el request para enviar texto.
+type SendTextRequest struct {
+    MessagingProduct string      `json:"messaging_product"`
+    To               string      `json:"to"`
+    Type             string      `json:"type"`
+    Text             TextContent `json:"text"`
 }
 
-func (r *AdapterRegistry) Register(adapter DeliveryAdapter) {
-    for _, ch := range adapter.SupportedChannels() {
-        r.adapters[ch] = adapter
-    }
+type TextContent struct {
+    Body string `json:"body"`
 }
 
-func (r *AdapterRegistry) GetAdapter(channel string) (DeliveryAdapter, error) {
-    adapter, ok := r.adapters[channel]
-    if !ok {
-        return nil, ErrChannelNotSupported
-    }
-    return adapter, nil
+// SendAudioRequest representa el request para enviar audio.
+type SendAudioRequest struct {
+    MessagingProduct string       `json:"messaging_product"`
+    To               string       `json:"to"`
+    Type             string       `json:"type"`
+    Audio            AudioContent `json:"audio"`
+}
+
+type AudioContent struct {
+    Link string `json:"link,omitempty"`
+    ID   string `json:"id,omitempty"`
+}
+
+// SendMessageResponse representa la respuesta de enviar mensaje.
+type SendMessageResponse struct {
+    MessagingProduct string    `json:"messaging_product"`
+    Contacts         []Contact `json:"contacts"`
+    Messages         []Message `json:"messages"`
+}
+
+type Contact struct {
+    Input string `json:"input"`
+    WaID  string `json:"wa_id"`
+}
+
+type Message struct {
+    ID string `json:"id"`
 }
 ```
 
-## 6. Integración con Pipeline
+## 5. Integración con Pipeline
 
 ```go
 type DeliveryStage struct {
-    registry *AdapterRegistry
+    whatsappClient *whatsapp.Client
 }
 
 func (s *DeliveryStage) Process(ctx context.Context, input interface{}) error {
     ttsOut := input.(*TTSOutput)
-    adapter, _ := s.registry.GetAdapter(ttsOut.Response.DeliveryChannel)
-    return adapter.SendAudio(ctx, ttsOut.Response.TargetUser, ttsOut.Audio.Reference)
+    _, err := s.whatsappClient.SendAudioMessage(ctx, ttsOut.Response.TargetUser, ttsOut.Audio.URL)
+    return err
 }
 ```
+
+## 6. Notas de Diseño
+
+- El cliente aísla todo el formato específico de WhatsApp
+- Los DTOs mapean directamente al JSON de la API
+- Permite cambio de implementación (mock, otro adapter) sin cambiar código cliente
+- Para la interfaz completa ver CONTRACT-005-WhatsApp-Adapter-Contract.md

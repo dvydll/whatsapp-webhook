@@ -12,44 +12,50 @@ github.com/whatsapp-tts/
 │   │   ├── message.go
 │   │   ├── response.go
 │   │   ├── audio.go
-│   │   └── error.go
+│   │   └── types.go
 │   │
 │   ├── pipeline/               # Motor de pipeline
 │   │   ├── pipeline.go
 │   │   ├── stage.go
+│   │   ├── stages/
+│   │   │   ├── ingestion.go
+│   │   │   ├── normalization.go
+│   │   │   ├── response_generation.go
+│   │   │   ├── tts_generation.go
+│   │   │   └── delivery.go
 │   │   └── context.go
 │   │
-│   ├── handler/                # Handlers HTTP
-│   │   ├── webhook.go
-│   │   └── health.go
+│   ├── webhook/                # Handlers HTTP
+│   │   └── handler.go
 │   │
 │   ├── config/                 # Configuración
 │   │   └── config.go
 │   │
-│   └── logging/                # Logging
-│       └── logger.go
-│
-├── adapters/                   # Implementaciones de contratos externos
-│   ├── tts/                    # Proveedores TTS
-│   │   ├── provider.go         # Interfaz TTSProvider
-│   │   ├── styletts/
-│   │   └── factory.go
+│   ├── logging/                # Logging
+│   │   └── logger.go
 │   │
-│   ├── delivery/               # Adapters de entrega
-│   │   ├── adapter.go         # Interfaz DeliveryAdapter
-│   │   └── whatsapp/
+│   ├── observability/          # Observabilidad
+│   │   └── logger.go
 │   │
-│   └── audio/                 # Procesamiento de audio
-│       └── processor.go
-│
-├── pkg/                        # Paquetes públicos reutilizables
-│   └── utils/
+│   └── adapters/               # Implementaciones de contratos externos
+│       ├── tts/                # Proveedores TTS
+│       │   ├── provider.go     # Interfaz TTSProvider
+│       │   ├── styletts/
+│       │   └── factory.go
+│       │
+│       ├── delivery/           # Adapters de entrega
+│       │   ├── adapter.go      # Interfaz DeliveryAdapter
+│       │   └── whatsapp/
+│       │
+│       └── whatsapp/            # Cliente WhatsApp Cloud API
+│           ├── client.go
+│           └── client_test.go
 │
 ├── contracts/                  # Contratos técnicos (esta carpeta)
 │
 ├── specs/                      # Especificaciones del sistema
 │
-├── worklogs/                   # Decisiones de trabajo
+├── logs/worklogs/              # Decisiones de trabajo
 │
 ├── scripts/                    # Scripts utilitarios
 │
@@ -84,7 +90,6 @@ internal/domain/
 ├── message.go       # UserMessage, MessageMetadata
 ├── response.go      # ResponseMessage, ResponseType
 ├── audio.go         # AudioAsset, AudioFormat
-├── error.go         # Domain errors
 └── types.go         # Channel, ContentType, etc.
 ```
 
@@ -99,37 +104,43 @@ internal/pipeline/
 ├── pipeline.go      # Pipeline execution
 ├── stage.go         # Stage interface
 ├── context.go       # PipelineContext
+├── stages/          # Implementaciones de stages
+│   ├── ingestion.go
+│   ├── normalization.go
+│   ├── response_generation.go
+│   ├── tts_generation.go
+│   └── delivery.go
 └── errors.go        # Pipeline errors
 ```
 
-### internal/handler/
-- Manejo de HTTP requests
+### internal/webhook/
+- Manejo de HTTP requests de webhook
 - Separación de transporte/dominio
 
 **Contenido esperado**:
 ```
-internal/handler/
-├── webhook.go       # Webhook handler
-├── health.go        # Health check
-└── middleware.go    # HTTP middleware
+internal/webhook/
+├── handler.go       # Webhook handler
+└── handler_test.go  # Tests con httptest
 ```
 
 ### internal/config/
 - Carga de configuración
 - Validación de config
 
-### internal/logging/
+### internal/logging/ y internal/observability/
 - Logging estructurado
 
-### adapters/tts/
+### internal/adapters/tts/
 - Implementaciones de proveedores TTS
 - Cada proveedor en su propio paquete
 
-### adapters/delivery/
+### internal/adapters/delivery/
 - Implementaciones de adapters de entrega
 
-### adapters/audio/
-- Procesamiento de audio
+### internal/adapters/whatsapp/
+- Cliente HTTP directo para WhatsApp Cloud API
+- Envío de mensajes de texto y audio
 
 ### contracts/
 - Contratos técnicos (este directorio)

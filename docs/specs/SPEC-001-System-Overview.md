@@ -13,11 +13,19 @@ El sistema es un servicio backend desarrollado en Go que integra la WhatsApp Clo
 
 El sistema opera como un servicio intermediario (middleware) entre dos sistemas externos:
 
-```
-[Usuario WhatsApp] --> [WhatsApp Cloud API] --> [Este Servicio] --> [TTS Service]
-                                                                      |
-                                                                      v
-                                              [WhatsApp Cloud API] <-- [Usuario WhatsApp]
+```mermaid
+flowchart LR
+    WA["👤 Usuario WhatsApp"] --> WAAPI["☁️ WhatsApp Cloud API"]
+    WAAPI --> SVC["🔧 Este Servicio"]
+    SVC --> TTS["🎤 TTS Service"]
+    TTS --> SVC
+    SVC --> WAAPI
+    WAAPI --> WA
+    
+    style WA fill:#e1f5fe
+    style WAAPI fill:#e8f5e8
+    style SVC fill:#fff3e0
+    style TTS fill:#fce4ec
 ```
 
 ### INPUT
@@ -68,29 +76,34 @@ El sistema opera como un servicio intermediario (middleware) entre dos sistemas 
 
 ## 4. High-Level Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         WhatsApp TTS Service                    │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐      │
-│  │   Ingestion  │    │   Pipeline   │    │   Delivery   │      │
-│  │    Layer     │--> │    Engine    │--> │    Layer     │      │
-│  └──────────────┘    └──────────────┘    └──────────────┘      │
-│         │                   │                   │               │
-│         v                   v                   v               │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐      │
-│  │   Webhook    │    │  Response    │    │   WhatsApp   │      │
-│  │   Handler    │    │  Generator   │    │    Adapter   │      │
-│  └──────────────┘    └──────────────┘    └──────────────┘      │
-│                            │                                     │
-│                            v                                     │
-│                     ┌──────────────┐                           │
-│                     │     TTS      │                           │
-│                     │   Provider   │                           │
-│                     └──────────────┘                           │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph SVC["WhatsApp TTS Service"]
+        subgraph ING["Ingestion Layer"]
+            WH["Webhook Handler"]
+        end
+        
+        subgraph PIP["Pipeline Engine"]
+            NORM["Normalize"]
+            RESP["Response Generator"]
+            TTS["TTS Provider"]
+        end
+        
+        subgraph DEL["Delivery Layer"]
+            WA["WhatsApp Adapter"]
+        end
+        
+        ING --> PIP
+        PIP --> DEL
+    end
+    
+    WA --> WAAPI["☁️ WhatsApp Cloud API"]
+    TTS --> TTSVC["🎤 TTS Service"]
+    
+    style SVC fill:#fff3e0,stroke:#ff9800
+    style ING fill:#e3f2fd,stroke:#2196f3
+    style PIP fill:#e8f5e9,stroke:#4caf50
+    style DEL fill:#fce4ec,stroke:#e91e63
 ```
 
 ### Componentes Principales
@@ -104,11 +117,22 @@ El sistema opera como un servicio intermediario (middleware) entre dos sistemas 
 
 ## 5. Flujo de Datos
 
-```
-User Message --> Webhook --> Normalize --> Process --> Generate Text 
-                                                          |
-                                                          v
-                              Send Audio <-- TTS <-- Generate Audio
+```mermaid
+sequenceDiagram
+    participant User as Usuario
+    participant WA as WhatsApp API
+    participant SVC as Servicio
+    participant TTS as TTS
+    
+    User->>WA: Envía mensaje de texto
+    WA->>SVC: Webhook POST
+    SVC->>SVC: Normalize
+    SVC->>SVC: Process
+    SVC->>SVC: Generate Text
+    SVC->>TTS: Genera Audio
+    TTS-->>SVC: Audio
+    SVC->>WA: Envía audio
+    WA->>User: Recibe audio
 ```
 
 ## 6.约束 (Constraints)

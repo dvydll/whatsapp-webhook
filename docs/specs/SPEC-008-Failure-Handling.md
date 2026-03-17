@@ -27,108 +27,26 @@ Esta especificación define cómo los errores y fallos se propagan a través del
 - Rate limiting
 - Audio inválido
 
-## 3. Tipos de Error
+## 3. Modelo de Errores
 
-```go
-package errors
+El modelo de errores está definido en CONTRACT-008-Error-Model.md. Incluye:
 
-import "fmt"
+- **AppError**: Estructura principal con código, mensaje, stage, retryable, details
+- **ErrorCode**: Códigos únicos para cada tipo de error
+- **PipelineStage**: Etapa donde ocurrió el error
+- **ErrorList**: Para acumular múltiples errores
 
-// Classification define la clasificación del error.
-type Classification string
+## 4. Estrategias de Retry
 
-const (
-    ClassificationTransient Classification = "transient"  // Retry puede ayudar
-    ClassificationPermanent Classification = "permanent" // No retry
-    ClassificationUnknown   Classification = "unknown"    // Determinar automáticamente
-)
-
-// ErrorWithClassification envuelve errores con clasificación.
-type ErrorWithClassification struct {
-    Err           error
-    Classification Classification
-    Retryable     bool
-    LogLevel      string  // "error", "warn", "info"
-}
-
-// NewTransientError crea un error transitorio.
-func NewTransientError(err error) *ErrorWithClassification {
-    return &ErrorWithClassification{
-        Err:            err,
-        Classification: ClassificationTransient,
-        Retryable:      true,
-        LogLevel:       "warn",
-    }
-}
-
-// NewPermanentError crea un error permanente.
-func NewPermanentError(err error) *ErrorWithClassification {
-    return &ErrorWithClassification{
-        Err:            err,
-        Classification: ClassificationPermanent,
-        Retryable:      false,
-        LogLevel:       "error",
-    }
-}
-
-// Unwrap retorna el error subyacente.
-func (e *ErrorWithClassification) Unwrap() error {
-    return e.Err
-}
-
-func (e *ErrorWithClassification) Error() string {
-    return fmt.Sprintf("[%s] %s", e.Classification, e.Err.Error())
-}
-```
-
-## 4. Errores Predefinidos
-
-```go
-package errors
-
-import "errors"
-
-var (
-    // ErrInvalidWebhookPayload = payload inválido
-    ErrInvalidWebhookPayload = errors.New("invalid webhook payload")
-    
-    // ErrNoMessages = no hay mensajes en el payload
-    ErrNoMessages = errors.New("no messages in payload")
-    
-    // ErrUnsupportedMessageType = tipo de mensaje no soportado
-    ErrUnsupportedMessageType = errors.New("unsupported message type")
-    
-    // ErrTTSGenerationFailed = generación TTS fallida
-    ErrTTSGenerationFailed = errors.New("tts generation failed")
-    
-    // ErrDeliveryFailed = entrega fallida
-    ErrDeliveryFailed = errors.New("delivery failed")
-    
-    // ErrWhatsAppAPIError = error de API de WhatsApp
-    ErrWhatsAppAPIError = errors.New("whatsapp api error")
-)
-```
-
-## 5. Estrategias de Retry
-
-### 5.1 Retry Config
+### 4.1 Retry Config
 
 ```go
 type RetryConfig struct {
-    // MaxRetries número máximo de reintentos
-    MaxRetries int
-    
-    // InitialBackoff tiempo inicial de backoff
-    InitialBackoff time.Duration
-    
-    // MaxBackoff tiempo máximo de backoff
-    MaxBackoff time.Duration
-    
-    // BackoffMultiplier multiplicador de backoff
+    MaxRetries        int
+    InitialBackoff    time.Duration
+    MaxBackoff        time.Duration
     BackoffMultiplier float64
-    
-    // RetryableErrors lista de errores que permiten retry
-    RetryableErrors []error
+    RetryableErrors   []error
 }
 
 var DefaultRetryConfig = RetryConfig{
@@ -139,16 +57,9 @@ var DefaultRetryConfig = RetryConfig{
 }
 ```
 
-### 5.2 Retry Logic
+### 4.2 Retry Logic
 
 ```go
-package retry
-
-import (
-    "context"
-    "time"
-)
-
 func Do(ctx context.Context, config RetryConfig, fn func() error) error {
     var lastErr error
     backoff := config.InitialBackoff
@@ -169,7 +80,6 @@ func Do(ctx context.Context, config RetryConfig, fn func() error) error {
         if err := fn(); err != nil {
             lastErr = err
             
-            // Verificar si es retryable
             if !isRetryable(err, config.RetryableErrors) {
                 return err
             }
@@ -182,101 +92,80 @@ func Do(ctx context.Context, config RetryConfig, fn func() error) error {
     
     return lastErr
 }
-
-func isRetryable(err error, retryableErrors []error) bool {
-    for _, r := range retryableErrors {
-        if errors.Is(err, r) {
-            return true
-        }
-    }
-    return false
-}
 ```
 
-### 5.3 Aplicación en Stages
+### 4.3 Aplicación en Stages
 
 ```go
-// Retry config para TTS (más reintentos, mayor backoff)
-var TTSRetryConfig = errors.RetryConfig{
+var TTSRetryConfig = RetryConfig{
     MaxRetries:        5,
     InitialBackoff:    2 * time.Second,
     MaxBackoff:        60 * time.Second,
-    RetryableErrors:   []error{errors.ErrTTSGenerationFailed},
 }
 
-// Retry config para Delivery (menos reintentos)
-var DeliveryRetryConfig = errors.RetryConfig{
+var DeliveryRetryConfig = RetryConfig{
     MaxRetries:        3,
     InitialBackoff:    1 * time.Second,
     MaxBackoff:        10 * time.Second,
-    RetryableErrors:   []error{errors.ErrDeliveryFailed},
 }
 ```
 
-## 6. Manejo en Pipeline
+## 5. Manejo en Pipeline
 
 ```go
-type Pipeline struct {
-    stages   []Stage
-    retryCfg map[string]RetryConfig  // Config por stage
-}
-
 func (p *Pipeline) Execute(ctx context.Context, input interface{}) (*PipelineContext, error) {
-    pc := newPipelineContext()
+    pc := &PipelineContext{
+        RequestID: generateRequestID(),
+        TraceID:   generateTraceID(),
+        Metadata:  make(map[string]interface{}),
+    }
+    
     currentInput := input
     
     for _, stage := range p.stages {
-        // Obtener config de retry para este stage
-        retryCfg := p.retryCfg[stage.Name()]
+        if !stage.CanProcess(currentInput) {
+            return nil, fmt.Errorf("stage %s cannot process input", stage.Name())
+        }
         
-        err := retry.Do(ctx, retryCfg, func() error {
-            out, err := stage.Process(ctx, currentInput)
-            if err != nil {
-                return err
-            }
-            currentInput = out
-            return nil
-        })
-        
+        output, err := stage.Process(ctx, currentInput)
         if err != nil {
             pc.Errors = append(pc.Errors, PipelineError{
                 Stage:   stage.Name(),
                 Err:     err,
-                IsFatal: !isRetryable(err),
+                IsFatal: true,
             })
-            
-            // Si es error fatal, detener pipeline
-            if !isRetryable(err) {
-                return pc, err
-            }
+            return pc, err
         }
+        
+        currentInput = output
     }
     
     return pc, nil
 }
 ```
 
-## 7. Logging de Errores
+## 6. Logging de Errores
 
 ```go
-package logging
-
-func LogPipelineError(err *PipelineError, logger Logger) {
-    level := err.Err.LogLevel()
-    
-    logger.Log(level, "pipeline_error",
+func LogPipelineError(err PipelineError, logger Logger) {
+    logger.Error("pipeline_error",
         "stage", err.Stage,
         "error", err.Err.Error(),
-        "classification", err.Err.Classification(),
-        "retryable", err.Err.Retryable(),
+        "is_fatal", err.IsFatal,
     )
 }
 ```
 
-## 8. Circuit Breaker (Futuro)
+## 7. Circuit Breaker (Futuro)
 
 Para sistemas de alto tráfico, considerar implementar circuit breaker:
 
 - After N consecutive failures, open circuit
 - After timeout, allow one request through (half-open)
 - If success, close circuit; if fail, reopen
+
+## 8. Notas
+
+- El modelo de errores detallado está en CONTRACT-008-Error-Model.md
+- Los códigos de error definidos en CONTRACT-008 deben usarse consistentemente
+- La clasificación retryable vs permanent guía la estrategia de retry
